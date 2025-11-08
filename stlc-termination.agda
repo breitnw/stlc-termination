@@ -381,6 +381,15 @@ red-def-equiv (β-v V) = β-v V (ctx-def-equiv refl) (ctx-def-equiv refl)
 red-def-equiv rec-zero = rec-zero (ctx-def-equiv refl) (ctx-def-equiv refl)
 red-def-equiv (rec-succ V) =  rec-succ V (ctx-def-equiv refl) (ctx-def-equiv refl)
 
+-- context replacement lemma for match representation
+crl-match : ∀ {Γ τsub τ} {esub esub' : Γ ⊢ τsub} {e e' : Γ ⊢ τ} {E : [ τsub ] Γ ⊢ τ}
+  → e matches E [ esub ]
+  → e' matches E [ esub' ]
+  → esub m-→ esub'
+    -------------------
+  → e m-→ e'
+crl-match = {!!}
+
 -- Normalization ---------------------------------------------------------------
 
 data ⇓ {Γ τ} (e1 : Γ ⊢ τ) : Set where
@@ -475,15 +484,16 @@ m-→≡ (rec-succ x x₁ x₂) e1m-→e3 = {!!}
 
 -- helper lemma: if we can take a step, we're not a value
 Vm-/→ : ∀ {Γ τ} {e1 e2 : Γ ⊢ τ} {ℓ} → (e1 m-→ e2) → Value e1 → ⊥ {ℓ}
-Vm-/→ (β-v V e1 e2) = {!!}
-Vm-/→ (rec-zero e1 e2) = {!!}
-Vm-/→ (rec-succ V e1 e2) = {!!}
+Vm-/→ (β-v V (subst-s em) (subst-s e'm)) (V-suc Ve1)
+  = Vm-/→ (β-v V em e'm) Ve1
+Vm-/→ (rec-zero (subst-s em) (subst-s e'm)) (V-suc Ve1)
+  = Vm-/→ (rec-zero em e'm) Ve1
+Vm-/→ (rec-succ V (subst-s em) (subst-s e'm)) (V-suc Ve1)
+  = Vm-/→ (rec-succ V em e'm) Ve1
 
 -- lemma: if we can take a step, we're not a value
 V-/→ : ∀ {Γ τ} {e1 e2 : Γ ⊢ τ} {ℓ} → (e1 -→ e2) → Value e1 → ⊥ {ℓ}
 V-/→ e1-→e2 Ve1 = Vm-/→ (red-def-equiv e1-→e2) Ve1
-
--- it's getting incredibly nasty
 
 -- lemma: SN preserved by conversion (forward)
 SN-→ : ∀ {τ} {e1 : ∅ ⊢ τ} {e2 : ∅ ⊢ τ} → (e1 -→ e2) → SN e1 → SN e2
@@ -623,8 +633,6 @@ subst≡2 : ∀ {Γ τ τsub1 τsub2 γ} {v1 : ∅ ⊢ τsub1} {v2 : ∅ ⊢ τs
     ----------------------------------------------------------------------------
   → e [γ:= (γ [x:= v1 ]) [x:= v2 ] ] (cons SNv2 (cons SNv1 γ⊨Γ)) ≡ (subst (exts (exts (σ-mass γ γ⊨Γ))) e [:= rename S v2 ] [:= v1 ])
 subst≡2 = {!!}
-
--- lemma: if a term is SN without substitution, then it is SN with substitution
 
 -- lemma: every typed term is good
 good : ∀ {Γ τ γ}
