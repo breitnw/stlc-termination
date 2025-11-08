@@ -1,394 +1,14 @@
 -- CS 496, HW 7
 -- Nicholas Breitling
 
-module _ where
+module stlc-termination where
 
+open import stlc-syntax
+open import stlc-reduction
+open import stlc-eval-context
 open import eq
-open import nat
-open import level
 open import empty
-open import bool
 open import product
-
--- Data ------------------------------------------------------------------------
-
--- types
-data Type : Set where
-  tnat : Type
-  _⇒_ : Type → Type → Type
-
--- typing environments
-data Env : Set where
-  ∅ : Env
-  _,_ : Env → Type → Env
-
--- lookup judgement (de Bruijn indices)
-data _∋_ : Env → Type → Set where
-  Z : ∀ {Γ τ}
-      -----------
-    → (Γ , τ) ∋ τ
-
-  S : ∀ {Γ τ1 τ2}
-    → Γ ∋ τ1
-      -----------
-    → (Γ , τ2) ∋ τ1
-
--- terms and the typing judgement
-data _⊢_ : Env → Type → Set where
-  ` : ∀ {Γ τ}
-    → Γ ∋ τ
-      -----
-    → Γ ⊢ τ
-
-  λ' : ∀ {Γ τ2}
-    → (τ1 : Type)
-    → (Γ , τ1) ⊢ τ2
-      ----------
-    → Γ ⊢ (τ1 ⇒ τ2)
-
-  ap : ∀ {Γ τ1 τ2}
-    → Γ ⊢ (τ1 ⇒ τ2)
-    → Γ ⊢ τ1
-      -----------
-    → Γ ⊢ τ2
-
-  z : ∀ {Γ}
-      -------
-    → Γ ⊢ tnat
-
-  s : ∀ {Γ}
-    → Γ ⊢ tnat
-      --------
-    → Γ ⊢ tnat
-
-  -- x_pre is bound to #1
-  -- y_rec is bound to #0
-  rec_[_][_] : ∀ {Γ τ}
-    → Γ ⊢ tnat
-    → Γ ⊢ τ
-    → ((Γ , tnat) , τ) ⊢ τ
-      --------------------
-    → Γ ⊢ τ
-
--- extension lemma: if every type in the environment Γ is also in Δ, then the
--- two environments extended by τnew will also contain the same types
-ext : ∀ {Γ Δ}
-  → (∀ {τ} → Γ ∋ τ → Δ ∋ τ)
-    ----------------------------------------------
-  → (∀ {τ τnew} → (Γ , τnew) ∋ τ → (Δ , τnew) ∋ τ)
-ext ρ Z = Z
-ext ρ (S x) = S (ρ x)
-
--- renaming: if every type in Γ is also in Δ, then any term that is typeable
--- under Γ has the same type under Δ
-rename : ∀ {Γ Δ}
-  → (∀ {τ} → Γ ∋ τ → Δ ∋ τ)
-    -----------------------
-  → (∀ {τ} → Γ ⊢ τ → Δ ⊢ τ)
-rename ρ (` x) = ` (ρ x)
-rename ρ (λ' τ1 e) = λ' τ1 (rename (ext ρ) e)
-rename ρ (ap e1 e2) = (ap (rename ρ e1) (rename ρ e2))
-rename ρ z = z
-rename ρ (s e) = s (rename ρ e)
-rename ρ rec e [ ez ][ es ]
-  = rec rename ρ e [ rename ρ ez ][ rename (ext (ext ρ)) es ]
-
--- extension lemma: given a map from variables in Γ to terms in Δ, we can
--- construct a map from variables in Γ extended to terms in Δ similarly extended
-exts : ∀ {Γ Δ}
-  → (∀ {τ} → Γ ∋ τ → Δ ⊢ τ)
-    ----------------------------------------------
-  → (∀ {τ τnew} → (Γ , τnew) ∋ τ → (Δ , τnew) ⊢ τ)
-exts σ Z = ` Z
-exts σ (S x) = rename S (σ x) -- get the term from Δ and rename it for Δ , τnew
-
--- substitution into expressions: if variables in one context map onto terms in
--- another, then terms in the first context map to terms in the second
-subst : ∀ {Γ Δ}
-  → (∀ {τ} → Γ ∋ τ → Δ ⊢ τ)
-    -----------------------
-  → (∀ {τ} → Γ ⊢ τ → Δ ⊢ τ)
-subst σ (` x) = σ x
-subst σ (λ' τ1 e) = λ' τ1 (subst (exts σ) e)
-subst σ (ap e1 e2) = ap (subst σ e1) (subst σ e2)
-subst σ z = z
-subst σ (s e) = s (subst σ e)
-subst σ rec e [ ez ][ es ]
-  = rec subst σ e [ subst σ ez ][ subst (exts (exts σ)) es ]
-
--- map for single substitution
-σ-single : ∀ {Γ τsub} → Γ ⊢ τsub → ∀ {τ} → (Γ , τsub) ∋ τ → Γ ⊢ τ
-σ-single esub Z = esub
-σ-single esub (S x) = ` x
-
--- single substitution
-_[:=_] : ∀ {Γ τ τsub}
-  → (Γ , τsub) ⊢ τ
-  → Γ ⊢ τsub
-  -------------
-  → Γ ⊢ τ
-_[:=_] {Γ} {τ} {τsub} e esub = subst {Γ , τsub} {Γ} (σ-single esub) {τ} e
-  -- where
-  -- if we have a well-typed term in Γ extended with τsub, and we have a term of
-  -- type τsub to substitute, then we can get a well-typed term in Γ by
-  -- substituting all the de Bruijn indices that are zero
-  -- σ : ∀ {τ} → (Γ , τsub) ∋ τ → Γ ⊢ τ
-  -- σ Z = esub
-  -- σ (S x) = ` x
-
--- values
-data Value : ∀ {Γ τ} → Γ ⊢ τ → Set where
-  V-λ' : ∀ {Γ τ1 τ2} {e : (Γ , τ1) ⊢ τ2}
-      ------------
-    → Value (λ' τ1 e)
-
-  V-z : ∀ {Γ}
-      -------------
-    → Value (z {Γ})
-
-  V-suc : ∀ {Γ} {v : Γ ⊢ tnat}
-    → Value v
-      -----------
-    → Value (s v)
-
--- evaluation contexts
--- the type in brackets is the type of the expression substituted into the
--- context. i know this is a strange way of writing things, but I couldn't
--- figure out a better way...
-data [_]_⊢_ : Type → Env → Type → Set where
-  -- the type of the substituted expression is the type of the hole
-  E-◻ : ∀ {Γ τsub}
-      --------------
-    → [ τsub ] Γ ⊢ τsub
-
-  E-s : ∀ {Γ τsub}
-    → [ τsub ] Γ ⊢ tnat
-      --------------
-    → [ τsub ] Γ ⊢ tnat
-
-  E-apl : ∀ {Γ τsub τ1 τ2}
-    → [ τsub ] Γ ⊢ (τ1 ⇒ τ2)
-    → Γ ⊢ τ1
-      --------------------
-    → [ τsub ] Γ ⊢ τ2
-
-  E-apr : ∀ {Γ τsub τ1 τ2} {v : Γ ⊢ (τ1 ⇒ τ2)}
-    → Value v
-    → [ τsub ] Γ ⊢ τ1
-      --------------------
-    → [ τsub ] Γ ⊢ τ2
-
-  E-rec_[_][_] : ∀ {Γ τsub τ}
-    → [ τsub ] Γ ⊢ tnat
-    → Γ ⊢ τ
-    → ((Γ , tnat) , τ) ⊢ τ
-      --------------------
-    → [ τsub ] Γ ⊢ τ
-
--- substitution into evaluation contexts
-_[_] : ∀ {Γ τ τsub} → [ τsub ] Γ ⊢ τ → Γ ⊢ τsub → Γ ⊢ τ
-E-◻ [ esub ] = esub
-E-s E [ esub ] = s (E [ esub ])
-E-apl E e [ esub ] = ap (E [ esub ]) e
-E-apr {Γ} {τsub} {τ1} {τ2} {v} _ E [ esub ] = ap v (E [ esub ])
-E-rec E [ ez ][ es ] [ esub ] = rec (E [ esub ]) [ ez ][ es ]
-
--- example
-ex : ∀ {Γ} → (E-s E-◻) [ s (z {Γ}) ] ≡ (s (s z))
-ex = refl
-
--- reduction relation
-infix 2 _-→_
-data _-→_ : ∀ {Γ τ} → (Γ ⊢ τ) → (Γ ⊢ τ) → Set where
-  β-v : ∀ {Γ τ τarg τret} {E : [ τret ] Γ ⊢ τ} {e : (Γ , τarg) ⊢ τret} {v : Γ ⊢ τarg}
-    → Value v
-      -------------------------------------------
-    → E [ (ap (λ' τarg e) v) ] -→ E [ e [:= v ] ]
-
-  rec-zero : ∀ {Γ τ τret}
-      { E : [ τret ] Γ ⊢ τ }
-      { ez : Γ ⊢ τret }
-      { es : ((Γ , tnat) , τret) ⊢ τret }
-      ------------------------------------
-    → E [ rec z [ ez ][ es ] ] -→ E [ ez ]
-
-  -- we need to rename when substituting since we're taking the environment
-  -- from ((Γ , tnat) , τret) to (Γ , tnat), but the expression we're
-  -- substituting we have types under Γ alone, not (Γ , tnat).
-  rec-succ : ∀ {Γ τ τret}
-      { E : [ τret ] Γ ⊢ τ }
-      { ez : Γ ⊢ τret }
-      { es : ((Γ , tnat) , τret) ⊢ τret }
-      { v : Γ ⊢ tnat }
-    → Value v
-      -------------------------------------------------------------------
-    → E [ rec (s v) [ ez ][ es ] ] -→ E [ es [:= rename S (rec v [ ez ][ es ]) ]
-                                             [:= v ] ]
-
--- PROVING PRESERVATION --------------------------------------------------------
-
--- Preservation comes for free with the intrinsically typed de Bruijn
--- representation! The -→ relation only accepts a pair of expressions that have
--- the same type in some environment Γ.
-
--- PROVING PROGRESS ------------------------------------------------------------
-
--- substitute a context in another context
-_[[_]] : ∀ {Γ τ τsub τsubsub}
-  → [ τsub ] Γ ⊢ τ
-  → [ τsubsub ] Γ ⊢ τsub
-  → [ τsubsub ] Γ ⊢ τ
-E-◻ [[ Esub ]] = Esub
-E-s E [[ Esub ]] = E-s (E [[ Esub ]])
-E-apl E e [[ Esub ]] = E-apl (E [[ Esub ]]) e
-E-apr V E [[ Esub ]] = E-apr V (E [[ Esub ]])
-E-rec E [ ez ][ es ] [[ Esub ]] = E-rec (E [[ Esub ]]) [ ez ][ es ]
-
--- and then we gotta prove a lemma about it
-subst-comm : ∀ {Γ τ τsub τsubsub}
-  (E1 : [ τsub ] Γ ⊢ τ )
-  (E2 : [ τsubsub ] Γ ⊢ τsub)
-  (e : Γ ⊢ τsubsub)
-  → E1 [ E2 [ e ] ] ≡ (E1 [[ E2 ]]) [ e ]
-subst-comm E-◻ E2 e = refl
-subst-comm (E-s E) E2 e
-  rewrite subst-comm E E2 e = refl
-subst-comm (E-apl E x) E2 e
-  rewrite subst-comm E E2 e = refl
-subst-comm (E-apr x E) E2 e
-  rewrite subst-comm E E2 e = refl
-subst-comm E-rec E [ ez ][ es ] E2 e
-  rewrite subst-comm E E2 e = refl
-
--- context replacement lemma, this one was surprisingly a huge pain
-crl : ∀ {Γ τsub τ} {e : Γ ⊢ τsub} {e' : Γ ⊢ τsub}
-  → (E : [ τsub ] Γ ⊢ τ)
-  → e -→ e'
-    -------------------
-  → E [ e ] -→ E [ e' ]
-crl {e = e} {e' = e'} E-out (β-v {Γ} {τ} {τarg} {τret} {E-in} {e-body} {v} V)
-  rewrite subst-comm E-out E-in (ap (λ' τarg e-body) v)
-        | subst-comm E-out E-in (e-body [:= v ])
-        = β-v V
-crl {e = e} {e' = e'} E-out (rec-zero {Γ} {τ} {τret} {E-in} {ez} {es})
-  rewrite subst-comm E-out E-in (rec z [ ez ][ es ])
-        | subst-comm E-out E-in (ez)
-        = rec-zero
-crl {e = e} {e' = e'} E-out (rec-succ {Γ} {τ} {τret} {E-in} {ez} {es} {v} V)
-  rewrite subst-comm E-out E-in (rec (s v) [ ez ][ es ])
-        | subst-comm E-out E-in (es [:= rename S (rec v [ ez ][ es ]) ] [:= v ])
-        = rec-succ V
-
--- definition of progress: well-typed terms can either take a step or are done
-data Progress {τ} (e1 : ∅ ⊢ τ) : Set where
-  step : ∀ {e2 : ∅ ⊢ τ}
-    → e1 -→ e2
-      ----------
-    → Progress e1
-
-  done :
-      Value e1
-      ----------
-    → Progress e1
-
--- progress lemma
-progress : ∀ {τ} → (e : ∅ ⊢ τ) → Progress e
-progress (` ())
-progress (λ' _ _) = done V-λ'
-progress (ap e1 e2) with progress e1
-...    | step e1-→e1' = step (crl (E-apl _ _) e1-→e1')
-...    | done V-λ' with progress e2
-...        | step e2-→e2' = step (crl (E-apr V-λ' _) e2-→e2')
-...        | done V    = step (β-v {E = E-◻} V)
-progress z = done V-z
-progress (s e) with progress e
-...    | step e-→e' = step (crl (E-s _) e-→e')
-...    | done V     = done (V-suc V)
-progress rec e [ ez ][ es ] with progress e
-...    | step e-→e' = step (crl (E-rec _ [ _ ][ _ ]) e-→e')
-...    | done V with e | V
-...         | z        | V-z         = step (rec-zero {E = E-◻})
-...         | s v      | V-suc Vprev = step (rec-succ {E = E-◻} Vprev)
-
--- HOMEWORK 6 ==================================================================
-
--- Alternative (relation) definition of evaluation contexts --------------------
-
-data _matches_[_] : ∀ {Γ τ1 τ2} → Γ ⊢ τ1 → [ τ2 ] Γ ⊢ τ1 → Γ ⊢ τ2 → Set where
-  subst-◻ : ∀ {Γ τ} {esub : Γ ⊢ τ} → esub matches E-◻ [ esub ]
-  subst-s : ∀ {Γ τ} {e : Γ ⊢ tnat} {E : [ τ ] Γ ⊢ tnat} { esub : Γ ⊢ τ }
-    → e matches E [ esub ] → (s e) matches (E-s E) [ esub ]
-  subst-apl : ∀ {Γ τ τsub τarg}
-    {e : Γ ⊢ (τarg ⇒ τ)} {E : [ τsub ] Γ ⊢ (τarg ⇒ τ)} {esub : Γ ⊢ τsub} {earg : Γ ⊢ τarg}
-    → e matches E [ esub ]
-    → (ap e earg) matches E-apl E earg [ esub ]
-  subst-apr : ∀ {Γ τ τsub τarg}
-    {e : Γ ⊢ τarg} {E : [ τsub ] Γ ⊢ τarg} {esub : Γ ⊢ τsub} {v : Γ ⊢ (τarg ⇒ τ)}
-    → e matches E [ esub ]
-    → (V : Value v)
-    → (ap v e) matches E-apr V E [ esub ]
-  subst-rec : ∀ {Γ τ τsub}
-    {E : [ τsub ] Γ ⊢ tnat} {ez : Γ ⊢ τ} {es : ((Γ , tnat) , τ) ⊢ τ} {e : Γ ⊢ tnat} {esub : Γ ⊢ τsub}
-    → e matches E [ esub ]
-    → rec e [ ez ][ es ] matches E-rec E [ ez ][ es ] [ esub ]
-
--- lemma: if we have an instance of the "matches" relation, then e is
--- equivalent to E [ esub ]
-ctx-def-equiv : ∀ {Γ τ τsub} {e : Γ ⊢ τ} {E : [ τsub ] Γ ⊢ τ} {esub : Γ ⊢ τsub}
-  → e ≡ E [ esub ]
-  → e matches E [ esub ]
-ctx-def-equiv {E = E-◻} refl = subst-◻
-ctx-def-equiv {E = E-s E} refl = subst-s (ctx-def-equiv refl)
-ctx-def-equiv {E = E-apl E e} refl = subst-apl (ctx-def-equiv refl)
-ctx-def-equiv {E = E-apr e E} refl = subst-apr (ctx-def-equiv refl) e
-ctx-def-equiv {E = E-rec E [ e1 ][ e2 ]} refl = subst-rec (ctx-def-equiv refl)
-
-infix 2 _m-→_
-data _m-→_ : ∀ {Γ τ} → (Γ ⊢ τ) → (Γ ⊢ τ) → Set where
-  β-v : ∀ {Γ τ τarg τret elhs erhs}
-      {E : [ τret ] Γ ⊢ τ}
-      {e : (Γ , τarg) ⊢ τret}
-      {v : Γ ⊢ τarg}
-    → Value v
-    → elhs matches E [ ap (λ' τarg e) v ]
-    → erhs matches E [ e [:= v ] ]
-      -------------------------------------------
-    → elhs m-→ erhs
-
-  rec-zero : ∀ {Γ τ τret elhs erhs}
-      { E : [ τret ] Γ ⊢ τ }
-      { ez : Γ ⊢ τret }
-      { es : ((Γ , tnat) , τret) ⊢ τret }
-    → elhs matches E [ rec z [ ez ][ es ] ]
-    → erhs matches E [ ez ]
-      ------------------------------------
-    → elhs m-→ erhs
-
-  rec-succ : ∀ {Γ τ τret elhs erhs}
-      { E : [ τret ] Γ ⊢ τ }
-      { ez : Γ ⊢ τret }
-      { es : ((Γ , tnat) , τret) ⊢ τret }
-      { v : Γ ⊢ tnat }
-    → Value v
-    → elhs matches E [ rec (s v) [ ez ][ es ] ]
-    → erhs matches E [ es [:= rename S (rec v [ ez ][ es ]) ] [:= v ] ]
-      -------------------------------------------------------------------
-    → elhs m-→ erhs
-
--- lemma: if e1 -→ e2, then e1 m-→ e2
-red-def-equiv : ∀ {Γ τ} {e1 : Γ ⊢ τ} {e2 : Γ ⊢ τ} → e1 -→ e2 → e1 m-→ e2
-red-def-equiv (β-v V) = β-v V (ctx-def-equiv refl) (ctx-def-equiv refl)
-red-def-equiv rec-zero = rec-zero (ctx-def-equiv refl) (ctx-def-equiv refl)
-red-def-equiv (rec-succ V) =  rec-succ V (ctx-def-equiv refl) (ctx-def-equiv refl)
-
--- context replacement lemma for match representation
-crl-match : ∀ {Γ τsub τ} {esub esub' : Γ ⊢ τsub} {e e' : Γ ⊢ τ} {E : [ τsub ] Γ ⊢ τ}
-  → e matches E [ esub ]
-  → e' matches E [ esub' ]
-  → esub m-→ esub'
-    -------------------
-  → e m-→ e'
-crl-match = {!!}
 
 -- Normalization ---------------------------------------------------------------
 
@@ -417,38 +37,55 @@ data SN : ∀ {Γ τ} → (e : Γ ⊢ τ) → Set where
       ----------------------------------
     → SN e
 
--- data Redex : ∀ {Γ τ} → Γ ⊢ τ → Set where
---   R-ap : ∀ {τarg e v}
---     → Value v
---       ------------
---     → Redex (ap (λ' τarg e) v)
+-- Helper data for dealing with evaluation contexts
+data Redex : ∀ {Γ τ} → Γ ⊢ τ → Set where
+  R-ap : ∀ {Γ τbody τarg} {e : (Γ , τarg) ⊢ τbody} {v : Γ ⊢ τarg}
+    → Value v
+      ------------
+    → Redex (ap (λ' τarg e) v)
 
-  -- V-z : ∀ {Γ}
-  --     -------------
-  --   → Value (z {Γ})
+  R-rec-z : ∀ {Γ τret}
+      { ez : Γ ⊢ τret }
+      { es : ((Γ , tnat) , τret) ⊢ τret }
+      ------------------------------------
+    → Redex rec z [ ez ][ es ]
 
-  -- V-suc : ∀ {Γ} {v : Γ ⊢ tnat}
-  --   → Value v
-  --     -----------
-  --   → Value (s v)
+  R-rec-succ : ∀ {Γ τret}
+      { ez : Γ ⊢ τret }
+      { es : ((Γ , tnat) , τret) ⊢ τret }
+      { v : Γ ⊢ tnat }
+    → Value v
+      ------------------------------------
+    → Redex rec (s v) [ ez ][ es ]
 
--- subst-unique-esub : ∀ {Γ τ τsub} {e : Γ ⊢ τ} {E1 E2 : [ τsub ] Γ ⊢ τ} {esub1 esub2 : Γ ⊢ τsub}
---   → e matches E1 [ esub1 ]
---   → e matches E2 [ esub2 ]
---     ------------------------
---   → esub1 ≡ esub2
--- subst-unique-esub {e = ` x} subst-◻ subst-◻ = refl
--- subst-unique-esub {e = λ' τ1 e} subst-◻ subst-◻ = refl
--- subst-unique-esub {e = ap e1 e2} subst-◻ subst-◻ = refl
--- subst-unique-esub {e = ap e1 e2} subst-◻ (subst-apl emE2) = {!!}
--- subst-unique-esub {e = ap e1 e2} subst-◻ (subst-apr emE2 V) = {!!}
--- subst-unique-esub {e = ap e1 e2} (subst-apl emE1) emE2 = {!!}
--- subst-unique-esub {e = ap e1 e2} (subst-apr emE1 V) emE2 = {!!}
--- subst-unique-esub {e = z} subst-◻ subst-◻ = refl
--- subst-unique-esub {e = s e} subst-◻ subst-◻ = refl
--- subst-unique-esub {e = s e} (subst-◻) (subst-s emE2) = {!!}
--- subst-unique-esub {e = s e} (subst-s emE1) emE2 = {!!}
--- subst-unique-esub {e = rec e [ e₁ ][ e₂ ]} emE1 emE2 = {!!}
+subst-unique-τsub : ∀ {Γ τ τsub1 τsub2} {e : Γ ⊢ τ} {E1 : [ τsub1 ] Γ ⊢ τ} {E2 : [ τsub2 ] Γ ⊢ τ} {esub1 : Γ ⊢ τsub1} {esub2 : Γ ⊢ τsub2}
+  → e matches E1 [ esub1 ]
+  → e matches E2 [ esub2 ]
+  → Redex esub1
+  → Redex esub2
+    ------------------------
+  → τsub1 ≡ τsub2
+subst-unique-τsub = {!!}
+
+subst-unique-esub : ∀ {Γ τ τsub} {e : Γ ⊢ τ} {E1 E2 : [ τsub ] Γ ⊢ τ} {esub1 esub2 : Γ ⊢ τsub}
+  → e matches E1 [ esub1 ]
+  → e matches E2 [ esub2 ]
+  → Redex esub1
+  → Redex esub2
+    ------------------------
+  → esub1 ≡ esub2
+subst-unique-esub {e = ` x} subst-◻ subst-◻ Resub1 Resub2 = refl
+subst-unique-esub {e = λ' τ1 e} subst-◻ subst-◻ Resub1 Resub2 = refl
+subst-unique-esub {e = ap e1 e2} subst-◻ subst-◻ Resub1 Resub2 = refl
+subst-unique-esub {e = ap e1 e2} subst-◻ (subst-apl emE2) Resub1 Resub2 = {!Resub2!}
+subst-unique-esub {e = ap e1 e2} subst-◻ (subst-apr emE2 V) Resub1 Resub2 = {!!}
+subst-unique-esub {e = ap e1 e2} (subst-apl emE1) emE2 Resub1 Resub2 = {!!}
+subst-unique-esub {e = ap e1 e2} (subst-apr emE1 V) emE2 Resub1 Resub2 = {!!}
+subst-unique-esub {e = z} subst-◻ subst-◻ Resub1 Resub2 = refl
+subst-unique-esub {e = s e} subst-◻ subst-◻ Resub1 Resub2 = refl
+subst-unique-esub {e = s e} (subst-◻) (subst-s emE2) Resub1 Resub2 = {!!}
+subst-unique-esub {e = s e} (subst-s emE1) emE2 Resub1 Resub2 = {!!}
+subst-unique-esub {e = rec e [ e₁ ][ e₂ ]} emE1 emE2 Resub1 Resub2 = {!!}
 
 -- lemma: expression can only match one evaluation context
 -- subst-unique-E : ∀ {Γ τ τsub1 τsub2} {e : Γ ⊢ τ} {E1 : [ τsub1 ] Γ ⊢ τ} {E2 : [ τsub2 ] Γ ⊢ τ} {esub1 esub2 : Γ ⊢ τsub}
@@ -469,10 +106,19 @@ data SN : ∀ {Γ τ} → (e : Γ ⊢ τ) → Set where
 -- subst-unique-E {e = s e} (subst-s emE1) emE2 = {!!}
 -- subst-unique-E {e = rec e [ e₁ ][ e₂ ]} emE1 emE2 = {!!}
 
+-- lemma : redex only decomposes into E-◻ and itself
+-- redex-decompose : ∀ {Γ τ τsub} {e1 : Γ ⊢ τ} {E : Γ ⊢ τ} → Redex e1 → e1 matches E [ esub ]
+
+-- helper lemma: only one valid reduction path for redexes
+Redex-m-→≡ : ∀ {Γ τ} {e1 e2 e3 : Γ ⊢ τ} → Redex e1 → (e1 m-→ e2) → (e1 m-→ e3) → e2 ≡ e3
+Redex-m-→≡ (R-ap x) e1-→e2 e1-→e3 = {!e1-→e2!}
+Redex-m-→≡ R-rec-z e1-→e2 e1-→e3 = {!!}
+Redex-m-→≡ (R-rec-succ x) e1-→e2 e1-→e3 = {!!}
+
 -- helper lemma: only one valid reduction path
 m-→≡ : ∀ {Γ τ} {e1 e2 e3 : Γ ⊢ τ} → (e1 m-→ e2) → (e1 m-→ e3) → e2 ≡ e3
-m-→≡ (β-v V e1mE1 e2mE1) (β-v V1 e1mE2 e3mE2)
-  = {!subst-unique-esub e1mE1 ?!}
+m-→≡ (β-v {τret = τret1} V1 e1mE1 e2mE1) (β-v {τret = τret2} V2 e1mE2 e3mE2)
+  rewrite subst-unique-τsub {τsub1 = τret1} {τsub2 = τret2} e1mE1 e1mE2 {!!} {!!} = {!subst-unique-esub e1mE1 e1mE2!}
 m-→≡ (β-v V e1mE e2mE) (rec-zero x x₁) = {!!}
 m-→≡ (β-v V e1mE e2mE) (rec-succ x x₁ x₂) = {!!}
 m-→≡ (rec-zero x x₁) e1m-→e3 = {!!}
@@ -482,14 +128,16 @@ m-→≡ (rec-succ x x₁ x₂) e1m-→e3 = {!!}
 -→≡ : ∀ {Γ τ} {e1 e2 e3 : Γ ⊢ τ} → (e1 -→ e2) → (e1 -→ e3) → e2 ≡ e3
 -→≡ e1-→e2 e1-→e3 = m-→≡ (red-def-equiv e1-→e2) (red-def-equiv e1-→e3)
 
+-- !!!!! TODO uncomment (temporarily removed because it's slow)
 -- helper lemma: if we can take a step, we're not a value
 Vm-/→ : ∀ {Γ τ} {e1 e2 : Γ ⊢ τ} {ℓ} → (e1 m-→ e2) → Value e1 → ⊥ {ℓ}
-Vm-/→ (β-v V (subst-s em) (subst-s e'm)) (V-suc Ve1)
-  = Vm-/→ (β-v V em e'm) Ve1
-Vm-/→ (rec-zero (subst-s em) (subst-s e'm)) (V-suc Ve1)
-  = Vm-/→ (rec-zero em e'm) Ve1
-Vm-/→ (rec-succ V (subst-s em) (subst-s e'm)) (V-suc Ve1)
-  = Vm-/→ (rec-succ V em e'm) Ve1
+Vm-/→ = {!!}
+-- Vm-/→ (β-v V (subst-s em) (subst-s e'm)) (V-suc Ve1)
+--   = Vm-/→ (β-v V em e'm) Ve1
+-- Vm-/→ (rec-zero (subst-s em) (subst-s e'm)) (V-suc Ve1)
+--   = Vm-/→ (rec-zero em e'm) Ve1
+-- Vm-/→ (rec-succ V (subst-s em) (subst-s e'm)) (V-suc Ve1)
+--   = Vm-/→ (rec-succ V em e'm) Ve1
 
 -- lemma: if we can take a step, we're not a value
 V-/→ : ∀ {Γ τ} {e1 e2 : Γ ⊢ τ} {ℓ} → (e1 -→ e2) → Value e1 → ⊥ {ℓ}
